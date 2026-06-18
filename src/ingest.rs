@@ -19,6 +19,10 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
         return StatusCode::NO_CONTENT;
     }
 
+    if !origin_allowed(&headers, &state.config.allowed_origin) {
+        return StatusCode::FORBIDDEN;
+    }
+
     let ip = client_ip(&headers);
     if !state.limiter.allow(&ip) {
         return StatusCode::TOO_MANY_REQUESTS;
@@ -133,6 +137,26 @@ impl RateLimiter {
     }
 }
 
+fn origin_allowed(headers: &HeaderMap, allowed: &str) -> bool {
+    if allowed.is_empty() {
+        return true; // enforcement disabled
+    }
+    if let Some(origin) = header_value(headers, "origin") {
+        return origin == allowed;
+    }
+    // Some clients omit Origin; fall back to the Referer's scheme://host.
+    if let Some(referer) = header_value(headers, "referer") {
+        return referer_origin(&referer).as_deref() == Some(allowed);
+    }
+    false
+}
+
+fn referer_origin(referer: &str) -> Option<String> {
+    let (scheme, rest) = referer.split_once("://")?;
+    let host = rest.split('/').next().filter(|h| !h.is_empty())?;
+    Some(format!("{scheme}://{host}"))
+}
+
 fn client_ip(headers: &HeaderMap) -> String {
     if let Some(ip) = header_value(headers, "fly-client-ip") {
         return ip;
@@ -220,6 +244,29 @@ mod tests {
             None
         );
         assert_eq!(referrer_host(None, "belderbos.dev"), None);
+    }
+
+    #[test]
+    fn origin_check_blocks_mismatch_and_missing() {
+        let allowed = "https://belderbos.dev";
+
+        let mut good = HeaderMap::new();
+        good.insert("origin", "https://belderbos.dev".parse().unwrap());
+        assert!(origin_allowed(&good, allowed));
+
+        let mut evil = HeaderMap::new();
+        evil.insert("origin", "https://evil.com".parse().unwrap());
+        assert!(!origin_allowed(&evil, allowed));
+
+        let mut via_referer = HeaderMap::new();
+        via_referer.insert(
+            "referer",
+            "https://belderbos.dev/articles/x".parse().unwrap(),
+        );
+        assert!(origin_allowed(&via_referer, allowed));
+
+        assert!(!origin_allowed(&HeaderMap::new(), allowed));
+        assert!(origin_allowed(&HeaderMap::new(), "")); // empty = disabled
     }
 
     #[test]

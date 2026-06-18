@@ -1,6 +1,8 @@
 # checkpulse — Privacy-First Web Analytics
 
-Lightweight, GDPR-compliant web analytics with a Rust ingestion backend. A single binary
+Lightweight, privacy-first web analytics with a Rust ingestion backend — cookie-banner-free
+and no IP storage, so GDPR compliance is easy (not a guarantee; that depends on how you run it).
+A single binary
 serves three things: the tracking snippet (`/script.js`), the ingestion API (`/api/event`),
 and a basic-auth dashboard (`/`). Data lives in one SQLite file.
 
@@ -31,7 +33,7 @@ DASHBOARD_USER=admin DASHBOARD_PASSWORD=secret PORT=8099 cargo run
 |-----|---------|-------|
 | `DATABASE_PATH` | `checkpulse.db` | SQLite file path |
 | `SITE_ID` | `belderbos.dev` | Tag stored on every event |
-| `ALLOWED_ORIGIN` | `https://belderbos.dev` | Reserved for CORS tightening |
+| `ALLOWED_ORIGIN` | `https://belderbos.dev` | Enforced on `/api/event`: rejects events whose `Origin`/`Referer` doesn't match (empty = disabled) |
 | `DASHBOARD_USER` / `DASHBOARD_PASSWORD` | `admin` / `changeme` | Dashboard basic auth |
 | `GEOLITE_DB_PATH` | _(unset)_ | Path to `GeoLite2-Country.mmdb`; country disabled if absent |
 | `BIND` / `PORT` | `0.0.0.0` / `8080` | Listen address |
