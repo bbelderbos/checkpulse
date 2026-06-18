@@ -93,6 +93,8 @@ fn build_snippet(endpoint: &str) -> String {
     format!(
         r#"(function(){{
   if (navigator.doNotTrack === "1") return;
+  var h = location.hostname;
+  if (h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "") return;
   var send = function(){{
     try {{
       navigator.sendBeacon("{endpoint}", JSON.stringify({{
