@@ -63,6 +63,42 @@ fly secrets set DASHBOARD_USER=... DASHBOARD_PASSWORD=...
 fly deploy
 ```
 
+## Operations (Fly.io)
+
+Day-to-day management of the deployed app (`checkpulse`):
+
+```bash
+# Status & logs
+fly status
+fly logs
+
+# Ship code changes (new snippet, Origin check, etc.)
+fly deploy
+
+# Pause / resume billing-relevant compute
+fly apps suspend checkpulse     # stop serving, keep app + data; resume later
+fly apps resume checkpulse
+fly machine restart <id>        # or: fly apps restart checkpulse
+
+# Rotate the dashboard password (can't be read back once set)
+fly secrets set DASHBOARD_PASSWORD=...
+
+# Shell into the running machine
+fly ssh console
+fly ssh sftp get /data/checkpulse.db ./backup.db   # pull a DB copy (see issue #2)
+
+# Wipe stats for a clean slate (migrations recreate an empty DB on restart)
+fly ssh console -C 'rm -f /data/checkpulse.db /data/checkpulse.db-wal /data/checkpulse.db-shm'
+fly apps restart checkpulse
+
+# Volume snapshots (daily, 5-day retention by default)
+fly volumes list
+fly volumes snapshots list <volume-id>
+
+# Tear everything down (app, machine, volume — irreversible)
+fly apps destroy checkpulse
+```
+
 ## Develop
 
 ```bash
