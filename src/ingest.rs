@@ -5,6 +5,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -170,15 +171,18 @@ fn referer_origin(referer: &str) -> Option<String> {
 }
 
 fn client_ip(headers: &HeaderMap) -> String {
-    if let Some(ip) = header_value(headers, "fly-client-ip") {
-        return ip;
-    }
-    if let Some(xff) = header_value(headers, "x-forwarded-for")
-        && let Some(first) = xff.split(',').next()
-    {
-        return first.trim().to_string();
-    }
-    header_value(headers, "x-real-ip").unwrap_or_default()
+    let candidates = [
+        header_value(headers, "fly-client-ip"),
+        header_value(headers, "x-forwarded-for")
+            .and_then(|xff| xff.split(',').next().map(|s| s.trim().to_string())),
+        header_value(headers, "x-real-ip"),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .find_map(|v| v.parse::<IpAddr>().ok())
+        .map(|ip| ip.to_string())
+        .unwrap_or_default()
 }
 
 fn header_value(headers: &HeaderMap, key: &str) -> Option<String> {
@@ -297,5 +301,26 @@ mod tests {
             limiter.allow(&format!("10.0.{}.{}", i / 256, i % 256));
         }
         assert!(limiter.state.lock().unwrap().len() <= MAX_TRACKED_IPS);
+    }
+
+    #[test]
+    fn client_ip_validates_and_normalizes() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "not-an-ip, 1.2.3.4".parse().unwrap());
+        assert_eq!(client_ip(&headers), "");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("fly-client-ip", "garbage".parse().unwrap());
+        headers.insert("x-real-ip", "1.2.3.4".parse().unwrap());
+        assert_eq!(client_ip(&headers), "1.2.3.4");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "fly-client-ip",
+            "2001:0db8:0000:0000:0000:0000:0000:0001".parse().unwrap(),
+        );
+        assert_eq!(client_ip(&headers), "2001:db8::1");
+
+        assert_eq!(client_ip(&HeaderMap::new()), "");
     }
 }
