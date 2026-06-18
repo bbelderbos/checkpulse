@@ -34,7 +34,8 @@ DASHBOARD_USER=admin DASHBOARD_PASSWORD=secret PORT=8099 cargo run
 | `DATABASE_PATH` | `checkpulse.db` | SQLite file path |
 | `SITE_ID` | `belderbos.dev` | Tag stored on every event |
 | `ALLOWED_ORIGIN` | `https://belderbos.dev` | Enforced on `/api/event`: rejects events whose `Origin`/`Referer` doesn't match (empty = disabled) |
-| `DASHBOARD_USER` / `DASHBOARD_PASSWORD` | `admin` / `changeme` | Dashboard basic auth |
+| `DASHBOARD_USER` | `admin` | Dashboard basic auth username |
+| `DASHBOARD_PASSWORD` | _(required)_ | Dashboard basic auth password; the app refuses to start if unset |
 | `GEOLITE_DB_PATH` | _(unset)_ | Path to `GeoLite2-Country.mmdb`; country disabled if absent |
 | `BIND` / `PORT` | `0.0.0.0` / `8080` | Listen address |
 
