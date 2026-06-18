@@ -1,0 +1,233 @@
+use crate::AppState;
+use axum::body::Body;
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Deserialize)]
+struct EventBody {
+    path: String,
+    referrer: Option<String>,
+}
+
+pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: String) -> StatusCode {
+    if header_value(&headers, "dnt").as_deref() == Some("1") {
+        return StatusCode::NO_CONTENT;
+    }
+
+    let ip = client_ip(&headers);
+    if !state.limiter.allow(&ip) {
+        return StatusCode::TOO_MANY_REQUESTS;
+    }
+
+    let event: EventBody = match serde_json::from_str(&body) {
+        Ok(e) => e,
+        Err(_) => return StatusCode::BAD_REQUEST,
+    };
+
+    let path = normalize_path(&event.path);
+    if path.is_empty() {
+        return StatusCode::BAD_REQUEST;
+    }
+
+    let user_agent = header_value(&headers, "user-agent").unwrap_or_default();
+    let visitor_hash = state
+        .salt
+        .visitor_hash(&ip, &user_agent, &state.config.site_id);
+    let referrer = referrer_host(event.referrer.as_deref(), &state.config.site_id);
+    let country = state
+        .geo
+        .as_ref()
+        .as_ref()
+        .and_then(|g| ip.parse().ok().and_then(|addr| g.country(addr)));
+    let ts = now_secs();
+
+    let result = sqlx::query(
+        "INSERT INTO events (site_id, ts, path, referrer, country, visitor_hash)
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&state.config.site_id)
+    .bind(ts)
+    .bind(&path)
+    .bind(&referrer)
+    .bind(&country)
+    .bind(&visitor_hash)
+    .execute(&state.pool)
+    .await;
+
+    match result {
+        Ok(_) => StatusCode::NO_CONTENT,
+        Err(e) => {
+            tracing::error!("failed to insert event: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+pub async fn script(headers: HeaderMap) -> Response {
+    let proto = header_value(&headers, "x-forwarded-proto").unwrap_or_else(|| "http".into());
+    let host = header_value(&headers, "host").unwrap_or_else(|| "localhost".into());
+    let endpoint = format!("{proto}://{host}/api/event");
+    let js = build_snippet(&endpoint);
+
+    Response::builder()
+        .header(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )
+        .header(header::CACHE_CONTROL, "public, max-age=86400")
+        .body(Body::from(js))
+        .unwrap()
+        .into_response()
+}
+
+fn build_snippet(endpoint: &str) -> String {
+    format!(
+        r#"(function(){{
+  if (navigator.doNotTrack === "1") return;
+  var send = function(){{
+    try {{
+      navigator.sendBeacon("{endpoint}", JSON.stringify({{
+        path: location.pathname,
+        referrer: document.referrer || null
+      }}));
+    }} catch (e) {{}}
+  }};
+  send();
+  var push = history.pushState;
+  history.pushState = function(){{ push.apply(this, arguments); send(); }};
+  window.addEventListener("popstate", send);
+}})();
+"#
+    )
+}
+
+pub struct RateLimiter {
+    limit: u32,
+    window_secs: u64,
+    state: Mutex<HashMap<String, (u64, u32)>>,
+}
+
+impl RateLimiter {
+    pub fn new(limit: u32, window_secs: u64) -> Self {
+        Self {
+            limit,
+            window_secs,
+            state: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn allow(&self, ip: &str) -> bool {
+        let window = now_secs() as u64 / self.window_secs;
+        let mut guard = self.state.lock().unwrap();
+        let entry = guard.entry(ip.to_string()).or_insert((window, 0));
+        if entry.0 != window {
+            *entry = (window, 0);
+        }
+        entry.1 += 1;
+        entry.1 <= self.limit
+    }
+}
+
+fn client_ip(headers: &HeaderMap) -> String {
+    if let Some(ip) = header_value(headers, "fly-client-ip") {
+        return ip;
+    }
+    if let Some(xff) = header_value(headers, "x-forwarded-for")
+        && let Some(first) = xff.split(',').next()
+    {
+        return first.trim().to_string();
+    }
+    header_value(headers, "x-real-ip").unwrap_or_default()
+}
+
+fn header_value(headers: &HeaderMap, key: &str) -> Option<String> {
+    headers
+        .get(key)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+}
+
+fn normalize_path(raw: &str) -> String {
+    let path = raw.split(['?', '#']).next().unwrap_or(raw).trim();
+    if path.is_empty() {
+        return String::new();
+    }
+    // Collapse a trailing slash (except root) so "/post/" and "/post" aggregate together.
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn referrer_host(raw: Option<&str>, site_id: &str) -> Option<String> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let without_scheme = raw.split("://").nth(1).unwrap_or(raw);
+    let host = without_scheme
+        .split('/')
+        .next()
+        .unwrap_or(without_scheme)
+        .trim_start_matches("www.")
+        .to_lowercase();
+    if host.is_empty() || host == site_id || host == format!("www.{site_id}") {
+        return None;
+    }
+    Some(host)
+}
+
+fn now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_strips_query_and_trailing_slash() {
+        assert_eq!(normalize_path("/articles/rust/?utm=x"), "/articles/rust");
+        assert_eq!(normalize_path("/"), "/");
+        assert_eq!(normalize_path(""), "");
+    }
+
+    #[test]
+    fn referrer_reduces_to_host_and_drops_self() {
+        assert_eq!(
+            referrer_host(
+                Some("https://news.ycombinator.com/item?id=1"),
+                "belderbos.dev"
+            ),
+            Some("news.ycombinator.com".into())
+        );
+        assert_eq!(
+            referrer_host(Some("https://belderbos.dev/x"), "belderbos.dev"),
+            None
+        );
+        assert_eq!(
+            referrer_host(Some("www.belderbos.dev"), "belderbos.dev"),
+            None
+        );
+        assert_eq!(referrer_host(None, "belderbos.dev"), None);
+    }
+
+    #[test]
+    fn limiter_blocks_after_limit() {
+        let limiter = RateLimiter::new(2, 60);
+        assert!(limiter.allow("1.1.1.1"));
+        assert!(limiter.allow("1.1.1.1"));
+        assert!(!limiter.allow("1.1.1.1"));
+        assert!(limiter.allow("2.2.2.2"));
+    }
+}

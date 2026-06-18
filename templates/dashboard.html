@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>checkpulse · {{ site_id }}</title>
+  <link rel="stylesheet" href="https://unpkg.com/uplot@1.6.30/dist/uPlot.min.css">
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body { font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 2rem; max-width: 960px; margin-inline: auto; }
+    h1 { font-size: 1.2rem; margin: 0 0 .25rem; }
+    .sub { color: #6b7280; margin: 0 0 1.5rem; }
+    .periods a { margin-right: .5rem; text-decoration: none; padding: .25rem .6rem; border-radius: 6px; border: 1px solid #d1d5db; color: inherit; }
+    .periods a.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .cards { display: flex; gap: 1rem; margin: 1.5rem 0; }
+    .card { flex: 1; border: 1px solid #e5e7eb; border-radius: 10px; padding: 1rem; }
+    .card .n { font-size: 1.8rem; font-weight: 600; }
+    .card .l { color: #6b7280; font-size: .85rem; }
+    #chart { margin: 1rem 0 2rem; }
+    .tables { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    table { width: 100%; border-collapse: collapse; }
+    h2 { font-size: .95rem; margin: 0 0 .5rem; }
+    td { padding: .3rem 0; border-bottom: 1px solid #f0f0f0; }
+    td.c { text-align: right; color: #6b7280; font-variant-numeric: tabular-nums; }
+    .empty { color: #9ca3af; font-style: italic; }
+    @media (max-width: 640px) { .cards, .tables { grid-template-columns: 1fr; flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <h1>checkpulse</h1>
+  <p class="sub">{{ site_id }}</p>
+
+  <div class="periods">
+    <a href="?period=today" class="{% if period == "today" %}active{% endif %}">Today</a>
+    <a href="?period=7d" class="{% if period == "7d" %}active{% endif %}">7 days</a>
+    <a href="?period=30d" class="{% if period == "30d" %}active{% endif %}">30 days</a>
+  </div>
+
+  <div class="cards">
+    <div class="card"><div class="n">{{ total_views }}</div><div class="l">Page views</div></div>
+    <div class="card"><div class="n">{{ unique_visitors }}</div><div class="l">Unique visitors</div></div>
+  </div>
+
+  <div id="chart"></div>
+
+  <div class="tables">
+    <div>
+      <h2>Top pages</h2>
+      {% if top_pages.is_empty() %}<p class="empty">No data yet.</p>{% else %}
+      <table>{% for row in top_pages %}<tr><td>{{ row.label }}</td><td class="c">{{ row.count }}</td></tr>{% endfor %}</table>
+      {% endif %}
+    </div>
+    <div>
+      <h2>Top referrers</h2>
+      {% if top_referrers.is_empty() %}<p class="empty">No external referrers yet.</p>{% else %}
+      <table>{% for row in top_referrers %}<tr><td>{{ row.label }}</td><td class="c">{{ row.count }}</td></tr>{% endfor %}</table>
+      {% endif %}
+    </div>
+    <div>
+      <h2>Top countries</h2>
+      {% if top_countries.is_empty() %}<p class="empty">No geo data yet.</p>{% else %}
+      <table>{% for row in top_countries %}<tr><td>{{ row.label }}</td><td class="c">{{ row.count }}</td></tr>{% endfor %}</table>
+      {% endif %}
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
+  <script>
+    var labels = {{ chart_labels|safe }};
+    var values = {{ chart_values|safe }};
+    if (labels.length) {
+      var xs = labels.map(function (_, i) { return i; });
+      var el = document.getElementById("chart");
+      var opts = {
+        width: el.clientWidth || 900,
+        height: 220,
+        scales: { x: { time: false } },
+        axes: [
+          { values: function (u, splits) { return splits.map(function (i) { return labels[i] || ""; }); } },
+          {}
+        ],
+        series: [
+          {},
+          { stroke: "#2563eb", width: 2, fill: "rgba(37,99,235,0.12)", points: { show: labels.length < 40 } }
+        ],
+        cursor: { y: false }
+      };
+      var plot = new uPlot(opts, [xs, values], el);
+      window.addEventListener("resize", function () { plot.setSize({ width: el.clientWidth, height: 220 }); });
+    }
+  </script>
+</body>
+</html>
