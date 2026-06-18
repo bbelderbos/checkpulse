@@ -112,6 +112,8 @@ fn build_snippet(endpoint: &str) -> String {
     )
 }
 
+const MAX_TRACKED_IPS: usize = 10_000;
+
 pub struct RateLimiter {
     limit: u32,
     window_secs: u64,
@@ -130,6 +132,14 @@ impl RateLimiter {
     pub fn allow(&self, ip: &str) -> bool {
         let window = now_secs() as u64 / self.window_secs;
         let mut guard = self.state.lock().unwrap();
+        if guard.len() > MAX_TRACKED_IPS {
+            guard.retain(|_, (w, _)| *w == window);
+            // Still over cap means a flood of distinct IPs in one window;
+            // drop everything to keep memory bounded at the cost of resetting counters.
+            if guard.len() > MAX_TRACKED_IPS {
+                guard.clear();
+            }
+        }
         let entry = guard.entry(ip.to_string()).or_insert((window, 0));
         if entry.0 != window {
             *entry = (window, 0);
@@ -278,5 +288,14 @@ mod tests {
         assert!(limiter.allow("1.1.1.1"));
         assert!(!limiter.allow("1.1.1.1"));
         assert!(limiter.allow("2.2.2.2"));
+    }
+
+    #[test]
+    fn limiter_caps_tracked_ips() {
+        let limiter = RateLimiter::new(1000, 60);
+        for i in 0..(MAX_TRACKED_IPS + 100) {
+            limiter.allow(&format!("10.0.{}.{}", i / 256, i % 256));
+        }
+        assert!(limiter.state.lock().unwrap().len() <= MAX_TRACKED_IPS);
     }
 }
