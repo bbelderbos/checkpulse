@@ -1,17 +1,10 @@
 # checkpulse — Privacy-First Web Analytics
 
-Lightweight, privacy-first web analytics with a Rust ingestion backend — cookie-banner-free
-and no IP storage, so GDPR compliance is easy (not a guarantee; that depends on how you run it).
-A single binary
-serves three things: the tracking snippet (`/script.js`), the ingestion API (`/api/event`),
-and a basic-auth dashboard (`/`). Data lives in one SQLite file.
+Lightweight, privacy-first web analytics with a Rust ingestion backend not storing any user identifiers. A single binary serves three things: the tracking snippet (`/script.js`), the ingestion API (`/api/event`), and a basic-auth dashboard (`/`). Data lives in one SQLite file.
 
 ## Privacy model
 
-No cookies, no localStorage, no stored IPs. The visitor IP is used only to (a) derive a
-country and (b) feed a daily-salted SHA-256 hash for approximate unique counting, then
-discarded. The salt rotates every 24h so visitors cannot be correlated across days. `DNT: 1`
-requests are dropped. This is the Plausible model: privacy-respecting *aggregate* analytics.
+No cookies, no localStorage, no stored IPs. The visitor IP is used only to (a) derive a country and (b) feed a daily-salted SHA-256 hash for approximate unique counting, then discarded. The salt rotates every 24h so visitors cannot be correlated across days. `DNT: 1` requests are dropped. This is similar to the Plausible model: privacy-respecting *aggregate* analytics.
 
 ## Run locally
 
