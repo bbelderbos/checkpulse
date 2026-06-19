@@ -366,6 +366,14 @@ mod tests {
     }
 
     #[test]
+    fn snippet_embeds_endpoint_and_guards() {
+        let js = build_snippet("https://checkpulse.fly.dev/api/event");
+        assert!(js.contains(r#"navigator.sendBeacon("https://checkpulse.fly.dev/api/event""#));
+        assert!(js.contains(r#"navigator.doNotTrack === "1""#));
+        assert!(js.contains("history.pushState"));
+    }
+
+    #[test]
     fn client_ip_validates_and_normalizes() {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "not-an-ip, 1.2.3.4".parse().unwrap());

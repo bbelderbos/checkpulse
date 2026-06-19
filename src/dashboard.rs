@@ -71,7 +71,11 @@ pub async fn dashboard(
     headers: HeaderMap,
     Query(query): Query<DashboardQuery>,
 ) -> Response {
-    if !authorized(&headers, &state) {
+    if !authorized(
+        &headers,
+        &state.config.dashboard_user,
+        &state.config.dashboard_password,
+    ) {
         return unauthorized();
     }
 
@@ -169,7 +173,7 @@ fn json_array(items: impl Iterator<Item = String>) -> String {
     format!("[{inner}]")
 }
 
-fn authorized(headers: &HeaderMap, state: &AppState) -> bool {
+fn authorized(headers: &HeaderMap, expected_user: &str, expected_pass: &str) -> bool {
     let Some(value) = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -188,7 +192,7 @@ fn authorized(headers: &HeaderMap, state: &AppState) -> bool {
     let Some((user, pass)) = creds.split_once(':') else {
         return false;
     };
-    user == state.config.dashboard_user && pass == state.config.dashboard_password
+    user == expected_user && pass == expected_pass
 }
 
 fn unauthorized() -> Response {
@@ -205,4 +209,97 @@ fn now_secs() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn auth_header(user: &str, pass: &str) -> HeaderMap {
+        let token = STANDARD.encode(format!("{user}:{pass}"));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Basic {token}").parse().unwrap(),
+        );
+        headers
+    }
+
+    #[test]
+    fn resolve_period_selects_grain_and_cutoff() {
+        let today = resolve_period(Some("today"));
+        assert_eq!(today.key, "today");
+        assert_eq!(today.series_sql, SERIES_HOURLY);
+        assert_eq!(today.cutoff % 86_400, 0); // aligned to midnight UTC
+
+        let month = resolve_period(Some("30d"));
+        assert_eq!(month.key, "30d");
+        assert_eq!(month.series_sql, SERIES_DAILY);
+
+        // Unknown and missing both fall back to 7d/daily.
+        assert_eq!(resolve_period(None).key, "7d");
+        assert_eq!(resolve_period(Some("nonsense")).key, "7d");
+        assert_eq!(resolve_period(Some("nonsense")).series_sql, SERIES_DAILY);
+
+        // Wider windows reach further back.
+        assert!(month.cutoff < resolve_period(None).cutoff);
+        assert!(resolve_period(None).cutoff < today.cutoff);
+    }
+
+    #[test]
+    fn json_array_wraps_and_joins() {
+        assert_eq!(json_array(std::iter::empty()), "[]");
+        assert_eq!(
+            json_array(["1".to_string(), "2".to_string()].into_iter()),
+            "[1,2]"
+        );
+        assert_eq!(
+            json_array([r#""a""#.to_string(), r#""b""#.to_string()].into_iter()),
+            r#"["a","b"]"#
+        );
+    }
+
+    #[test]
+    fn authorized_accepts_only_exact_credentials() {
+        assert!(authorized(
+            &auth_header("admin", "secret"),
+            "admin",
+            "secret"
+        ));
+        assert!(!authorized(
+            &auth_header("admin", "wrong"),
+            "admin",
+            "secret"
+        ));
+        assert!(!authorized(
+            &auth_header("eve", "secret"),
+            "admin",
+            "secret"
+        ));
+    }
+
+    #[test]
+    fn authorized_rejects_malformed_headers() {
+        // Missing header.
+        assert!(!authorized(&HeaderMap::new(), "admin", "secret"));
+
+        // Wrong scheme.
+        let mut bearer = HeaderMap::new();
+        bearer.insert(header::AUTHORIZATION, "Bearer xyz".parse().unwrap());
+        assert!(!authorized(&bearer, "admin", "secret"));
+
+        // Not valid base64.
+        let mut bad_b64 = HeaderMap::new();
+        bad_b64.insert(header::AUTHORIZATION, "Basic !!!!".parse().unwrap());
+        assert!(!authorized(&bad_b64, "admin", "secret"));
+
+        // Decodes but has no colon separator.
+        let mut no_colon = HeaderMap::new();
+        let token = STANDARD.encode("adminsecret");
+        no_colon.insert(
+            header::AUTHORIZATION,
+            format!("Basic {token}").parse().unwrap(),
+        );
+        assert!(!authorized(&no_colon, "admin", "secret"));
+    }
 }
