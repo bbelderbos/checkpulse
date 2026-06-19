@@ -6,6 +6,7 @@ mod hash;
 mod ingest;
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use config::Config;
 use geo::Geo;
@@ -67,7 +68,10 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(dashboard::dashboard))
         .route("/script.js", get(ingest::script))
-        .route("/api/event", post(ingest::ingest))
+        .route(
+            "/api/event",
+            post(ingest::ingest).layer(DefaultBodyLimit::max(4096)),
+        )
         .route("/health", get(|| async { "ok" }))
         .layer(cors)
         .with_state(state);

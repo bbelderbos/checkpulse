@@ -39,6 +39,10 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
         Err(_) => return StatusCode::BAD_REQUEST,
     };
 
+    if !within_limits(&event.path, event.referrer.as_deref()) {
+        return StatusCode::BAD_REQUEST;
+    }
+
     let path = normalize_path(&event.path);
     if path.is_empty() {
         return StatusCode::BAD_REQUEST;
@@ -217,6 +221,13 @@ fn header_value(headers: &HeaderMap, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+const MAX_PATH_LEN: usize = 1024;
+const MAX_REFERRER_LEN: usize = 2048;
+
+fn within_limits(path: &str, referrer: Option<&str>) -> bool {
+    path.len() <= MAX_PATH_LEN && referrer.is_none_or(|r| r.len() <= MAX_REFERRER_LEN)
+}
+
 fn normalize_path(raw: &str) -> String {
     let path = raw.split(['?', '#']).next().unwrap_or(raw).trim();
     if path.is_empty() {
@@ -259,6 +270,17 @@ fn now_secs() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn within_limits_rejects_oversized_fields() {
+        assert!(within_limits(
+            "/articles/rust",
+            Some("https://news.ycombinator.com/item?id=1")
+        ));
+        assert!(within_limits("/", None));
+        assert!(!within_limits(&"/".repeat(MAX_PATH_LEN + 1), None));
+        assert!(!within_limits("/", Some(&"a".repeat(MAX_REFERRER_LEN + 1))));
+    }
 
     #[test]
     fn normalize_strips_query_and_trailing_slash() {
