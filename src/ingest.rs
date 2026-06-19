@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 struct EventBody {
     path: String,
     referrer: Option<String>,
+    name: Option<String>,
 }
 
 pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: String) -> StatusCode {
@@ -39,7 +40,11 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
         Err(_) => return StatusCode::BAD_REQUEST,
     };
 
-    if !within_limits(&event.path, event.referrer.as_deref()) {
+    if !within_limits(
+        &event.path,
+        event.referrer.as_deref(),
+        event.name.as_deref(),
+    ) {
         return StatusCode::BAD_REQUEST;
     }
 
@@ -47,6 +52,14 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
     if path.is_empty() {
         return StatusCode::BAD_REQUEST;
     }
+
+    let name = event
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(str::to_string);
+    let (browser, device) = crate::ua::classify(&user_agent);
 
     let visitor_hash = state
         .salt
@@ -60,8 +73,8 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
     let ts = now_secs();
 
     let result = sqlx::query(
-        "INSERT INTO events (site_id, ts, path, referrer, country, visitor_hash)
-         VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO events (site_id, ts, path, referrer, country, visitor_hash, name, browser, device)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&state.config.site_id)
     .bind(ts)
@@ -69,6 +82,9 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
     .bind(&referrer)
     .bind(&country)
     .bind(&visitor_hash)
+    .bind(&name)
+    .bind(browser)
+    .bind(device)
     .execute(&state.pool)
     .await;
 
@@ -104,18 +120,21 @@ fn build_snippet(endpoint: &str) -> String {
   if (navigator.doNotTrack === "1") return;
   var h = location.hostname;
   if (h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "") return;
-  var send = function(){{
+  var endpoint = "{endpoint}";
+  var send = function(name){{
     try {{
-      navigator.sendBeacon("{endpoint}", JSON.stringify({{
+      navigator.sendBeacon(endpoint, JSON.stringify({{
         path: location.pathname,
-        referrer: document.referrer || null
+        referrer: name ? null : (document.referrer || null),
+        name: name || null
       }}));
     }} catch (e) {{}}
   }};
   send();
+  window.checkpulse = function(name){{ if (typeof name === "string" && name) send(name); }};
   var push = history.pushState;
   history.pushState = function(){{ push.apply(this, arguments); send(); }};
-  window.addEventListener("popstate", send);
+  window.addEventListener("popstate", function(){{ send(); }});
 }})();
 "#
     )
@@ -176,6 +195,11 @@ const BOT_UA_TOKENS: &[&str] = &[
 
 fn is_bot(user_agent: &str) -> bool {
     let ua = user_agent.to_lowercase();
+    // Every real browser sends a UA containing "Mozilla" via sendBeacon; anything
+    // without it (empty, or a non-browser HTTP client) is automation.
+    if !ua.contains("mozilla") {
+        return true;
+    }
     BOT_UA_TOKENS.iter().any(|token| ua.contains(token))
 }
 
@@ -223,9 +247,12 @@ fn header_value(headers: &HeaderMap, key: &str) -> Option<String> {
 
 const MAX_PATH_LEN: usize = 1024;
 const MAX_REFERRER_LEN: usize = 2048;
+const MAX_NAME_LEN: usize = 64;
 
-fn within_limits(path: &str, referrer: Option<&str>) -> bool {
-    path.len() <= MAX_PATH_LEN && referrer.is_none_or(|r| r.len() <= MAX_REFERRER_LEN)
+fn within_limits(path: &str, referrer: Option<&str>, name: Option<&str>) -> bool {
+    path.len() <= MAX_PATH_LEN
+        && referrer.is_none_or(|r| r.len() <= MAX_REFERRER_LEN)
+        && name.is_none_or(|n| !n.is_empty() && n.len() <= MAX_NAME_LEN)
 }
 
 fn normalize_path(raw: &str) -> String {
@@ -275,11 +302,27 @@ mod tests {
     fn within_limits_rejects_oversized_fields() {
         assert!(within_limits(
             "/articles/rust",
-            Some("https://news.ycombinator.com/item?id=1")
+            Some("https://news.ycombinator.com/item?id=1"),
+            None
         ));
-        assert!(within_limits("/", None));
-        assert!(!within_limits(&"/".repeat(MAX_PATH_LEN + 1), None));
-        assert!(!within_limits("/", Some(&"a".repeat(MAX_REFERRER_LEN + 1))));
+        assert!(within_limits("/", None, None));
+        assert!(!within_limits(&"/".repeat(MAX_PATH_LEN + 1), None, None));
+        assert!(!within_limits(
+            "/",
+            Some(&"a".repeat(MAX_REFERRER_LEN + 1)),
+            None
+        ));
+    }
+
+    #[test]
+    fn within_limits_guards_event_name() {
+        assert!(within_limits("/", None, Some("newsletter-signup")));
+        assert!(!within_limits("/", None, Some("")));
+        assert!(!within_limits(
+            "/",
+            None,
+            Some(&"x".repeat(MAX_NAME_LEN + 1))
+        ));
     }
 
     #[test]
@@ -321,7 +364,18 @@ mod tests {
         assert!(!is_bot(
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
         ));
-        assert!(!is_bot(""));
+    }
+
+    #[test]
+    fn is_bot_requires_a_browser_user_agent() {
+        // Empty or non-browser UAs never reach the JS beacon legitimately.
+        assert!(is_bot(""));
+        assert!(is_bot("python-requests/2.31.0"));
+        assert!(is_bot("my-custom-scraper/1.0"));
+        // A real browser UA always carries "Mozilla".
+        assert!(!is_bot(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0"
+        ));
     }
 
     #[test]
@@ -368,9 +422,11 @@ mod tests {
     #[test]
     fn snippet_embeds_endpoint_and_guards() {
         let js = build_snippet("https://checkpulse.fly.dev/api/event");
-        assert!(js.contains(r#"navigator.sendBeacon("https://checkpulse.fly.dev/api/event""#));
+        assert!(js.contains(r#"var endpoint = "https://checkpulse.fly.dev/api/event";"#));
+        assert!(js.contains("navigator.sendBeacon(endpoint"));
         assert!(js.contains(r#"navigator.doNotTrack === "1""#));
         assert!(js.contains("history.pushState"));
+        assert!(js.contains("window.checkpulse"));
     }
 
     #[test]

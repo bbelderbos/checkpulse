@@ -4,7 +4,7 @@ Lightweight, privacy-first web analytics with a Rust ingestion backend not stori
 
 ## Privacy model
 
-No cookies, no localStorage, no stored IPs. The visitor IP is used only to (a) derive a country and (b) feed a daily-salted SHA-256 hash for approximate unique counting, then discarded. The salt rotates every 24h so visitors cannot be correlated across days. `DNT: 1` requests are dropped. This is similar to the Plausible model: privacy-respecting *aggregate* analytics.
+No cookies, no localStorage, no stored IPs. The visitor IP is used only to (a) derive a country and (b) feed a daily-salted SHA-256 hash for approximate unique counting, then discarded. The salt rotates every 24h so visitors cannot be correlated across days. `DNT: 1` requests are dropped. Each event also stores a coarse browser family (Chrome/Safari/Firefox/Edge/Other) and device type (desktop/mobile) parsed from the User-Agent — too coarse to fingerprint. Optional [custom events](#custom-events) are counted by name only, with no payload. This is similar to the Plausible model: privacy-respecting *aggregate* analytics.
 
 ## Security
 
@@ -52,6 +52,17 @@ Drop this into `templates/base.html` before `</head>`:
 ```
 
 The snippet derives its POST endpoint from its own host, so the same tag works in dev and prod.
+
+## Custom events
+
+The snippet exposes `window.checkpulse(name)` for tracking actions that aren't page loads (sign-ups, outbound clicks, etc.). Call it with a short event name:
+
+```html
+<button onclick="checkpulse('newsletter-signup')">Subscribe</button>
+<a href="https://github.com/bbelderbos" onclick="checkpulse('outbound-github')">GitHub</a>
+```
+
+Each call records the event name and the current path — no other payload. Names are capped at 64 characters. Events show up in the dashboard's **Top events** panel, counted separately from page views. No call, no event; page views keep working on their own. Keep names free of personal data (they're stored verbatim).
 
 ## Country breakdown (optional)
 

@@ -1,0 +1,3 @@
+ALTER TABLE events ADD COLUMN name    TEXT;
+ALTER TABLE events ADD COLUMN browser TEXT;
+ALTER TABLE events ADD COLUMN device  TEXT;

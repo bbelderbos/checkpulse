@@ -63,6 +63,24 @@
       <table>{% for row in top_countries %}<tr><td>{{ row.label }}</td><td class="c">{{ row.count }}</td></tr>{% endfor %}</table>
       {% endif %}
     </div>
+    <div>
+      <h2>Top events</h2>
+      {% if top_events.is_empty() %}<p class="empty">No custom events yet.</p>{% else %}
+      <table>{% for row in top_events %}<tr><td>{{ row.label }}</td><td class="c">{{ row.count }}</td></tr>{% endfor %}</table>
+      {% endif %}
+    </div>
+    <div>
+      <h2>Top browsers</h2>
+      {% if top_browsers.is_empty() %}<p class="empty">No data yet.</p>{% else %}
+      <table>{% for row in top_browsers %}<tr><td>{{ row.label }}</td><td class="c">{{ row.count }}</td></tr>{% endfor %}</table>
+      {% endif %}
+    </div>
+    <div>
+      <h2>Top devices</h2>
+      {% if top_devices.is_empty() %}<p class="empty">No data yet.</p>{% else %}
+      <table>{% for row in top_devices %}<tr><td>{{ row.label }}</td><td class="c">{{ row.count }}</td></tr>{% endfor %}</table>
+      {% endif %}
+    </div>
   </div>
 
   <script src="https://unpkg.com/uplot@1.6.30/dist/uPlot.iife.min.js"></script>

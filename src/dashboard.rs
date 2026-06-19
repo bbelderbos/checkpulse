@@ -32,6 +32,9 @@ struct DashboardTemplate {
     top_pages: Vec<Count>,
     top_referrers: Vec<Count>,
     top_countries: Vec<Count>,
+    top_events: Vec<Count>,
+    top_browsers: Vec<Count>,
+    top_devices: Vec<Count>,
 }
 
 struct Period {
@@ -41,9 +44,9 @@ struct Period {
 }
 
 const SERIES_HOURLY: &str = "SELECT strftime('%H:00', ts, 'unixepoch') AS label, COUNT(*) AS count
-     FROM events WHERE site_id = ? AND ts >= ? GROUP BY label ORDER BY label";
+     FROM events WHERE site_id = ? AND ts >= ? AND name IS NULL GROUP BY label ORDER BY label";
 const SERIES_DAILY: &str = "SELECT strftime('%m-%d', ts, 'unixepoch') AS label, COUNT(*) AS count
-     FROM events WHERE site_id = ? AND ts >= ? GROUP BY label ORDER BY label";
+     FROM events WHERE site_id = ? AND ts >= ? AND name IS NULL GROUP BY label ORDER BY label";
 
 fn resolve_period(raw: Option<&str>) -> Period {
     let now = now_secs();
@@ -84,14 +87,14 @@ pub async fn dashboard(
 
     let total_views = scalar_count(
         &state.pool,
-        "SELECT COUNT(*) FROM events WHERE site_id = ? AND ts >= ?",
+        "SELECT COUNT(*) FROM events WHERE site_id = ? AND ts >= ? AND name IS NULL",
         site,
         period.cutoff,
     )
     .await;
     let unique_visitors = scalar_count(
         &state.pool,
-        "SELECT COUNT(DISTINCT visitor_hash) FROM events WHERE site_id = ? AND ts >= ?",
+        "SELECT COUNT(DISTINCT visitor_hash) FROM events WHERE site_id = ? AND ts >= ? AND name IS NULL",
         site,
         period.cutoff,
     )
@@ -101,7 +104,7 @@ pub async fn dashboard(
     let top_pages = grouped(
         &state.pool,
         "SELECT path AS label, COUNT(*) AS count
-         FROM events WHERE site_id = ? AND ts >= ?
+         FROM events WHERE site_id = ? AND ts >= ? AND name IS NULL
          GROUP BY path ORDER BY count DESC LIMIT 15",
         site,
         period.cutoff,
@@ -110,7 +113,7 @@ pub async fn dashboard(
     let top_referrers = grouped(
         &state.pool,
         "SELECT referrer AS label, COUNT(*) AS count
-         FROM events WHERE site_id = ? AND ts >= ? AND referrer IS NOT NULL
+         FROM events WHERE site_id = ? AND ts >= ? AND name IS NULL AND referrer IS NOT NULL
          GROUP BY referrer ORDER BY count DESC LIMIT 15",
         site,
         period.cutoff,
@@ -119,8 +122,35 @@ pub async fn dashboard(
     let top_countries = grouped(
         &state.pool,
         "SELECT country AS label, COUNT(*) AS count
-         FROM events WHERE site_id = ? AND ts >= ? AND country IS NOT NULL
+         FROM events WHERE site_id = ? AND ts >= ? AND name IS NULL AND country IS NOT NULL
          GROUP BY country ORDER BY count DESC LIMIT 15",
+        site,
+        period.cutoff,
+    )
+    .await;
+    let top_browsers = grouped(
+        &state.pool,
+        "SELECT browser AS label, COUNT(*) AS count
+         FROM events WHERE site_id = ? AND ts >= ? AND name IS NULL AND browser IS NOT NULL
+         GROUP BY browser ORDER BY count DESC LIMIT 15",
+        site,
+        period.cutoff,
+    )
+    .await;
+    let top_devices = grouped(
+        &state.pool,
+        "SELECT device AS label, COUNT(*) AS count
+         FROM events WHERE site_id = ? AND ts >= ? AND name IS NULL AND device IS NOT NULL
+         GROUP BY device ORDER BY count DESC LIMIT 15",
+        site,
+        period.cutoff,
+    )
+    .await;
+    let top_events = grouped(
+        &state.pool,
+        "SELECT name AS label, COUNT(*) AS count
+         FROM events WHERE site_id = ? AND ts >= ? AND name IS NOT NULL
+         GROUP BY name ORDER BY count DESC LIMIT 15",
         site,
         period.cutoff,
     )
@@ -139,6 +169,9 @@ pub async fn dashboard(
         top_pages,
         top_referrers,
         top_countries,
+        top_events,
+        top_browsers,
+        top_devices,
     };
 
     match page.render() {
