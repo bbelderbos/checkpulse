@@ -6,6 +6,17 @@ Lightweight, privacy-first web analytics with a Rust ingestion backend not stori
 
 No cookies, no localStorage, no stored IPs. The visitor IP is used only to (a) derive a country and (b) feed a daily-salted SHA-256 hash for approximate unique counting, then discarded. The salt rotates every 24h so visitors cannot be correlated across days. `DNT: 1` requests are dropped. This is similar to the Plausible model: privacy-respecting *aggregate* analytics.
 
+## Security
+
+Properties verified by review:
+
+- **No SQL injection** — every query uses bound parameters (sqlx prepared statements); no request data is ever concatenated into SQL.
+- **No stored XSS** — dashboard output is auto-escaped (Askama); the only unescaped values are server-generated chart numbers and dates.
+- **No PII at rest** — IPs are never stored. The IP feeds a daily-salted SHA-256 hash (salt is random, in-memory, rotates every 24h and on restart) and is then discarded, so visitors can't be correlated across days or recovered later.
+- **Authenticated dashboard** — basic auth over forced HTTPS; the app refuses to start without `DASHBOARD_PASSWORD`. Use a strong password (the dashboard itself is not rate-limited).
+- **Abuse limits** — per-IP rate limiting (120 req/min) on `/api/event`, `Origin`/`Referer` allow-listing, and a 2 MB request-body cap.
+- **Hardened runtime** — runs as a non-root user in the container; secrets come from env / Fly secrets and are gitignored locally.
+
 ## Run locally
 
 ```bash
