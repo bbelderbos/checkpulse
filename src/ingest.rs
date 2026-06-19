@@ -24,6 +24,11 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
         return StatusCode::FORBIDDEN;
     }
 
+    let user_agent = header_value(&headers, "user-agent").unwrap_or_default();
+    if is_bot(&user_agent) {
+        return StatusCode::NO_CONTENT;
+    }
+
     let ip = client_ip(&headers);
     if !state.limiter.allow(&ip) {
         return StatusCode::TOO_MANY_REQUESTS;
@@ -39,7 +44,6 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
         return StatusCode::BAD_REQUEST;
     }
 
-    let user_agent = header_value(&headers, "user-agent").unwrap_or_default();
     let visitor_hash = state
         .salt
         .visitor_hash(&ip, &user_agent, &state.config.site_id);
@@ -148,6 +152,27 @@ impl RateLimiter {
         entry.1 += 1;
         entry.1 <= self.limit
     }
+}
+
+const BOT_UA_TOKENS: &[&str] = &[
+    "bot",
+    "spider",
+    "crawl",
+    "slurp",
+    "headless",
+    "scanner",
+    "curl",
+    "wget",
+    "python-requests",
+    "go-http-client",
+    "phantomjs",
+    "facebookexternalhit",
+    "embedly",
+];
+
+fn is_bot(user_agent: &str) -> bool {
+    let ua = user_agent.to_lowercase();
+    BOT_UA_TOKENS.iter().any(|token| ua.contains(token))
 }
 
 fn origin_allowed(headers: &HeaderMap, allowed: &str) -> bool {
@@ -260,6 +285,21 @@ mod tests {
             None
         );
         assert_eq!(referrer_host(None, "belderbos.dev"), None);
+    }
+
+    #[test]
+    fn is_bot_flags_crawlers_and_tools() {
+        assert!(is_bot(
+            "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+        ));
+        assert!(is_bot("curl/8.4.0"));
+        assert!(is_bot("HeadlessChrome/120.0.0.0"));
+        assert!(is_bot("facebookexternalhit/1.1"));
+
+        assert!(!is_bot(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        ));
+        assert!(!is_bot(""));
     }
 
     #[test]
