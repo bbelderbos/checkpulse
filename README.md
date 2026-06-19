@@ -64,6 +64,21 @@ The snippet exposes `window.checkpulse(name)` for tracking actions that aren't p
 
 Each call records the event name and the current path — no other payload. Names are capped at 64 characters. Events show up in the dashboard's **Top events** panel, counted separately from page views. No call, no event; page views keep working on their own. Keep names free of personal data (they're stored verbatim).
 
+### Querying events
+
+The dashboard's **Top events** panel shows totals by name. Each event row also stores the page path it fired from, so you can break any event down by article without tracking anything extra — it's already in the `path` column.
+
+The runtime image has no `sqlite3`, so the workflow is: pull the (small) DB locally, then query it with `just` (needs `sqlite3` on your machine):
+
+```bash
+just pull-db                       # fly ssh sftp get → ./checkpulse-prod.db (gitignored)
+just events                        # all custom-event totals, last 30 days
+just events cohort-python-agentic  # which articles drove that event, by path
+just events cta-top 7              # top-CTA clicks in the last 7 days, by article
+```
+
+`just events NAME [DAYS] [DB]` — omit `NAME` for totals; defaults are 30 days and `checkpulse-prod.db` (pass a local `checkpulse.db` for dev data). `pull-db` copies the live file while the app may be writing; fine for aggregate counts, but use a volume snapshot if you need a guaranteed-consistent dump.
+
 ## Country breakdown (optional)
 
 1. Create a free MaxMind account, download `GeoLite2-Country.mmdb`.
