@@ -58,12 +58,6 @@
       {% endif %}
     </div>
     <div>
-      <h2>Top countries</h2>
-      {% if top_countries.is_empty() %}<p class="empty">No geo data yet.</p>{% else %}
-      <table>{% for row in top_countries %}<tr><td>{{ row.label }}</td><td class="c">{{ row.count }}</td></tr>{% endfor %}</table>
-      {% endif %}
-    </div>
-    <div>
       <h2>Top events</h2>
       {% if top_events.is_empty() %}<p class="empty">No custom events yet.</p>{% else %}
       <table>{% for row in top_events %}<tr><td>{{ row.label }}</td><td class="c">{{ row.count }}</td></tr>{% endfor %}</table>

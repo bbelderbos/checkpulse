@@ -31,7 +31,6 @@ struct DashboardTemplate {
     chart_values: String,
     top_pages: Vec<Count>,
     top_referrers: Vec<Count>,
-    top_countries: Vec<Count>,
     top_events: Vec<Count>,
     top_browsers: Vec<Count>,
     top_devices: Vec<Count>,
@@ -119,15 +118,6 @@ pub async fn dashboard(
         period.cutoff,
     )
     .await;
-    let top_countries = grouped(
-        &state.pool,
-        "SELECT country AS label, COUNT(*) AS count
-         FROM events WHERE site_id = ? AND ts >= ? AND name IS NULL AND country IS NOT NULL
-         GROUP BY country ORDER BY count DESC LIMIT 15",
-        site,
-        period.cutoff,
-    )
-    .await;
     let top_browsers = grouped(
         &state.pool,
         "SELECT browser AS label, COUNT(*) AS count
@@ -168,7 +158,6 @@ pub async fn dashboard(
         chart_values,
         top_pages,
         top_referrers,
-        top_countries,
         top_events,
         top_browsers,
         top_devices,

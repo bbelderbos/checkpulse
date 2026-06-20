@@ -7,7 +7,6 @@ pub struct Config {
     pub allowed_origin: String,
     pub dashboard_user: String,
     pub dashboard_password: String,
-    pub geolite_db_path: Option<String>,
     pub bind: String,
     pub port: u16,
 }
@@ -20,7 +19,6 @@ impl Config {
             allowed_origin: var("ALLOWED_ORIGIN", "https://belderbos.dev"),
             dashboard_user: var("DASHBOARD_USER", "admin"),
             dashboard_password: required_var("DASHBOARD_PASSWORD"),
-            geolite_db_path: env::var("GEOLITE_DB_PATH").ok().filter(|s| !s.is_empty()),
             bind: var("BIND", "0.0.0.0"),
             port: var("PORT", "8080").parse().unwrap_or(8080),
         }

@@ -1,7 +1,6 @@
 mod config;
 mod dashboard;
 mod db;
-mod geo;
 mod hash;
 mod ingest;
 mod ua;
@@ -10,7 +9,6 @@ use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use config::Config;
-use geo::Geo;
 use hash::Salt;
 use ingest::RateLimiter;
 use sqlx::SqlitePool;
@@ -22,7 +20,6 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub config: Arc<Config>,
     pub salt: Arc<Salt>,
-    pub geo: Arc<Option<Geo>>,
     pub limiter: Arc<RateLimiter>,
 }
 
@@ -38,26 +35,11 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env();
     let pool = db::connect(&config.database_path).await?;
 
-    let geo = match &config.geolite_db_path {
-        Some(path) => match Geo::open(path) {
-            Ok(g) => {
-                tracing::info!("loaded GeoLite2 database from {path}");
-                Some(g)
-            }
-            Err(e) => {
-                tracing::warn!("could not load GeoLite2 db ({path}): {e} — country disabled");
-                None
-            }
-        },
-        None => None,
-    };
-
     let addr = format!("{}:{}", config.bind, config.port);
     let state = AppState {
         pool,
         config: Arc::new(config),
         salt: Arc::new(Salt::new()),
-        geo: Arc::new(geo),
         limiter: Arc::new(RateLimiter::new(120, 60)),
     };
 

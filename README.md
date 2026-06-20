@@ -4,7 +4,7 @@ Lightweight, privacy-first web analytics with a Rust ingestion backend not stori
 
 ## Privacy model
 
-No cookies, no localStorage, no stored IPs. The visitor IP is used only to (a) derive a country and (b) feed a daily-salted SHA-256 hash for approximate unique counting, then discarded. The salt rotates every 24h so visitors cannot be correlated across days. `DNT: 1` requests are dropped. Each event also stores a coarse browser family (Chrome/Safari/Firefox/Edge/Other) and device type (desktop/mobile) parsed from the User-Agent — too coarse to fingerprint. Optional [custom events](#custom-events) are counted by name only, with no payload. This is similar to the Plausible model: privacy-respecting *aggregate* analytics.
+No cookies, no localStorage, no stored IPs. The visitor IP is used only to feed a daily-salted SHA-256 hash for approximate unique counting, then discarded. The salt rotates every 24h so visitors cannot be correlated across days. `DNT: 1` requests are dropped. Each event also stores a coarse browser family (Chrome/Safari/Firefox/Edge/Other) and device type (desktop/mobile) parsed from the User-Agent — too coarse to fingerprint. Optional [custom events](#custom-events) are counted by name only, with no payload. This is similar to the Plausible model: privacy-respecting *aggregate* analytics.
 
 ## Security
 
@@ -40,7 +40,6 @@ DASHBOARD_USER=admin DASHBOARD_PASSWORD=secret PORT=8099 cargo run
 | `ALLOWED_ORIGIN` | `https://belderbos.dev` | Enforced on `/api/event`: rejects events whose `Origin`/`Referer` doesn't match (empty = disabled) |
 | `DASHBOARD_USER` | `admin` | Dashboard basic auth username |
 | `DASHBOARD_PASSWORD` | _(required)_ | Dashboard basic auth password; the app refuses to start if unset |
-| `GEOLITE_DB_PATH` | _(unset)_ | Path to `GeoLite2-Country.mmdb`; country disabled if absent |
 | `BIND` / `PORT` | `0.0.0.0` / `8080` | Listen address |
 
 ## Add to a site (Zola)
@@ -78,12 +77,6 @@ just events cta-top 7              # top-CTA clicks in the last 7 days, by artic
 ```
 
 `just events NAME [DAYS] [DB]` — omit `NAME` for totals; defaults are 30 days and `checkpulse-prod.db` (pass a local `checkpulse.db` for dev data). `pull-db` copies the live file while the app may be writing; fine for aggregate counts, but use a volume snapshot if you need a guaranteed-consistent dump.
-
-## Country breakdown (optional)
-
-1. Create a free MaxMind account, download `GeoLite2-Country.mmdb`.
-2. Place it where `GEOLITE_DB_PATH` points (on Fly: upload to the `/data` volume).
-   Country fills in automatically once the file is present; no code change needed.
 
 ## Deploy (Fly.io)
 

@@ -5,7 +5,6 @@ primary_region = "ams"
 
 [env]
   DATABASE_PATH = "/data/checkpulse.db"
-  GEOLITE_DB_PATH = "/data/GeoLite2-Country.mmdb"
   SITE_ID = "belderbos.dev"
   ALLOWED_ORIGIN = "https://belderbos.dev"
 

@@ -65,22 +65,16 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
         .salt
         .visitor_hash(&ip, &user_agent, &state.config.site_id);
     let referrer = referrer_host(event.referrer.as_deref(), &state.config.site_id);
-    let country = state
-        .geo
-        .as_ref()
-        .as_ref()
-        .and_then(|g| ip.parse().ok().and_then(|addr| g.country(addr)));
     let ts = now_secs();
 
     let result = sqlx::query(
-        "INSERT INTO events (site_id, ts, path, referrer, country, visitor_hash, name, browser, device)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO events (site_id, ts, path, referrer, visitor_hash, name, browser, device)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&state.config.site_id)
     .bind(ts)
     .bind(&path)
     .bind(&referrer)
-    .bind(&country)
     .bind(&visitor_hash)
     .bind(&name)
     .bind(browser)
