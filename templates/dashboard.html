@@ -24,6 +24,8 @@
     td { padding: .3rem 0; border-bottom: 1px solid #f0f0f0; }
     td.c { text-align: right; color: #6b7280; font-variant-numeric: tabular-nums; }
     .empty { color: #9ca3af; font-style: italic; }
+    .hint { font-weight: 400; color: #9ca3af; font-size: .8rem; }
+    .people { color: #9ca3af; }
     @media (max-width: 640px) { .cards, .tables { grid-template-columns: 1fr; flex-direction: column; } }
   </style>
 </head>
@@ -58,9 +60,9 @@
       {% endif %}
     </div>
     <div>
-      <h2>Top events</h2>
+      <h2>Top events <span class="hint">clicks / people</span></h2>
       {% if top_events.is_empty() %}<p class="empty">No custom events yet.</p>{% else %}
-      <table>{% for row in top_events %}<tr><td>{{ row.label }}</td><td class="c">{{ row.count }}</td></tr>{% endfor %}</table>
+      <table>{% for row in top_events %}<tr><td>{{ row.label }}</td><td class="c">{{ row.count }} <span class="people">/ {{ row.people }}</span></td></tr>{% endfor %}</table>
       {% endif %}
     </div>
     <div>

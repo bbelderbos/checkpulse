@@ -15,6 +15,13 @@ pub struct Count {
     pub count: i64,
 }
 
+#[derive(sqlx::FromRow)]
+pub struct EventCount {
+    pub label: String,
+    pub count: i64,
+    pub people: i64,
+}
+
 #[derive(Deserialize)]
 pub struct DashboardQuery {
     period: Option<String>,
@@ -31,7 +38,7 @@ struct DashboardTemplate {
     chart_values: String,
     top_pages: Vec<Count>,
     top_referrers: Vec<Count>,
-    top_events: Vec<Count>,
+    top_events: Vec<EventCount>,
     top_browsers: Vec<Count>,
     top_devices: Vec<Count>,
 }
@@ -136,9 +143,11 @@ pub async fn dashboard(
         period.cutoff,
     )
     .await;
-    let top_events = grouped(
+    // Repeat clicks are the signal that a CTA is not working, so surface both
+    // the raw count and how many distinct visitors are behind it.
+    let top_events = grouped_events(
         &state.pool,
-        "SELECT name AS label, COUNT(*) AS count
+        "SELECT name AS label, COUNT(*) AS count, COUNT(DISTINCT visitor_hash) AS people
          FROM events WHERE site_id = ? AND ts >= ? AND name IS NOT NULL
          GROUP BY name ORDER BY count DESC LIMIT 15",
         site,
@@ -183,6 +192,20 @@ async fn scalar_count(pool: &SqlitePool, sql: &'static str, site: &str, cutoff: 
 
 async fn grouped(pool: &SqlitePool, sql: &'static str, site: &str, cutoff: i64) -> Vec<Count> {
     sqlx::query_as::<_, Count>(sql)
+        .bind(site)
+        .bind(cutoff)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+}
+
+async fn grouped_events(
+    pool: &SqlitePool,
+    sql: &'static str,
+    site: &str,
+    cutoff: i64,
+) -> Vec<EventCount> {
+    sqlx::query_as::<_, EventCount>(sql)
         .bind(site)
         .bind(cutoff)
         .fetch_all(pool)
