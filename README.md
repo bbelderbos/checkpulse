@@ -31,7 +31,7 @@ A dashboard at `/` (basic auth, `?period=today|7d|30d`) showing:
 
 - Page views and approximate unique visitors
 - A views-over-time chart
-- Top pages, top referrers, top custom events
+- Top pages, top referrers, top custom events (as `clicks / people`)
 - Browser family (Chrome/Safari/Firefox/Edge/Other) and device type (desktop/mobile)
 
 Three endpoints on one binary: `/script.js` (the tracker), `/api/event` (ingestion), `/` (the dashboard). Plus `/health`.
@@ -116,6 +116,27 @@ Each call stores the event name and the current path — nothing else. Names are
 
 Because every event row keeps the path it fired from, you can break any event down by article without tracking anything extra. See [OPERATIONS.md](OPERATIONS.md#querying-custom-events) for the `just events` queries.
 
+The panel shows `clicks / people`. When those diverge, one visitor is clicking
+the same thing repeatedly — usually a sign the link isn't doing what they
+expect. `just sessions` prints the per-visitor timeline behind it.
+
+## Attribution
+
+Referrers come from the `Referer` header, reduced to a bare host. Mobile apps
+strip that header often enough that a large "direct" bucket is normal.
+
+To recover those visits, tag the link with `utm_source`:
+
+```
+https://example.com/pricing?utm_source=linkedin
+```
+
+The snippet forwards the query string and the server stores `utm_source` in the
+referrer column when no real referrer is present — a genuine header always wins.
+Values are lower-cased and limited to 32 characters of `[a-z0-9_-]`; anything
+else is dropped. Only `utm_source` is read; the rest of the query string is
+discarded and never stored.
+
 ## Privacy model
 
 No cookies, no `localStorage`, no stored IPs.
@@ -132,7 +153,7 @@ Properties verified by review:
 - **No stored XSS** — dashboard output is auto-escaped (Askama); the only unescaped values are server-generated chart numbers and dates.
 - **No PII at rest** — see the privacy model above.
 - **Authenticated dashboard** — basic auth over forced HTTPS; the app refuses to start without `DASHBOARD_PASSWORD`. Use a long random one: the dashboard is not rate-limited.
-- **Abuse limits** — per-IP rate limiting (120 req/min) on `/api/event`, `Origin`/`Referer` allow-listing, a 4 KB request-body cap, and field-length caps on path, referrer, and event name.
+- **Abuse limits** — per-IP rate limiting (120 req/min) on `/api/event`, `Origin`/`Referer` allow-listing, a 4 KB request-body cap, and field-length caps on path, referrer, query string, and event name.
 - **Bot filtering** — requests without a browser-shaped User-Agent, and known crawler tokens, are dropped.
 - **Hardened runtime** — runs as a non-root user in the container; secrets come from env / Fly secrets and are gitignored locally.
 

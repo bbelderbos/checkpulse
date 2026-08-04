@@ -14,6 +14,7 @@ struct EventBody {
     path: String,
     referrer: Option<String>,
     name: Option<String>,
+    query: Option<String>,
 }
 
 pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: String) -> StatusCode {
@@ -44,6 +45,7 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
         &event.path,
         event.referrer.as_deref(),
         event.name.as_deref(),
+        event.query.as_deref(),
     ) {
         return StatusCode::BAD_REQUEST;
     }
@@ -64,7 +66,10 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
     let visitor_hash = state
         .salt
         .visitor_hash(&ip, &user_agent, &state.config.site_id);
-    let referrer = referrer_host(event.referrer.as_deref(), &state.config.site_id);
+    // Mobile apps routinely strip the referrer header, so a self-declared
+    // utm_source is the only attribution left for those visits.
+    let referrer = referrer_host(event.referrer.as_deref(), &state.config.site_id)
+        .or_else(|| utm_source(event.query.as_deref()));
     let ts = now_secs();
 
     let result = sqlx::query(
@@ -120,7 +125,8 @@ fn build_snippet(endpoint: &str) -> String {
       navigator.sendBeacon(endpoint, JSON.stringify({{
         path: location.pathname,
         referrer: name ? null : (document.referrer || null),
-        name: name || null
+        name: name || null,
+        query: name ? null : (location.search || null)
       }}));
     }} catch (e) {{}}
   }};
@@ -242,11 +248,38 @@ fn header_value(headers: &HeaderMap, key: &str) -> Option<String> {
 const MAX_PATH_LEN: usize = 1024;
 const MAX_REFERRER_LEN: usize = 2048;
 const MAX_NAME_LEN: usize = 64;
+const MAX_QUERY_LEN: usize = 512;
+const MAX_SOURCE_LEN: usize = 32;
 
-fn within_limits(path: &str, referrer: Option<&str>, name: Option<&str>) -> bool {
+fn within_limits(
+    path: &str,
+    referrer: Option<&str>,
+    name: Option<&str>,
+    query: Option<&str>,
+) -> bool {
     path.len() <= MAX_PATH_LEN
         && referrer.is_none_or(|r| r.len() <= MAX_REFERRER_LEN)
         && name.is_none_or(|n| !n.is_empty() && n.len() <= MAX_NAME_LEN)
+        && query.is_none_or(|q| q.len() <= MAX_QUERY_LEN)
+}
+
+fn utm_source(query: Option<&str>) -> Option<String> {
+    let value = query?
+        .trim_start_matches('?')
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("utm_source="))?
+        .to_lowercase();
+    // Reject anything needing percent-decoding rather than pulling in a decoder;
+    // real utm_source values are plain slugs.
+    if value.is_empty()
+        || value.len() > MAX_SOURCE_LEN
+        || !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+    Some(value)
 }
 
 fn normalize_path(raw: &str) -> String {
@@ -297,26 +330,68 @@ mod tests {
         assert!(within_limits(
             "/articles/rust",
             Some("https://news.ycombinator.com/item?id=1"),
+            None,
             None
         ));
-        assert!(within_limits("/", None, None));
-        assert!(!within_limits(&"/".repeat(MAX_PATH_LEN + 1), None, None));
+        assert!(within_limits("/", None, None, None));
+        assert!(!within_limits(
+            &"/".repeat(MAX_PATH_LEN + 1),
+            None,
+            None,
+            None
+        ));
         assert!(!within_limits(
             "/",
             Some(&"a".repeat(MAX_REFERRER_LEN + 1)),
+            None,
             None
+        ));
+        assert!(!within_limits(
+            "/",
+            None,
+            None,
+            Some(&"q".repeat(MAX_QUERY_LEN + 1))
         ));
     }
 
     #[test]
     fn within_limits_guards_event_name() {
-        assert!(within_limits("/", None, Some("newsletter-signup")));
-        assert!(!within_limits("/", None, Some("")));
+        assert!(within_limits("/", None, Some("newsletter-signup"), None));
+        assert!(!within_limits("/", None, Some(""), None));
         assert!(!within_limits(
             "/",
             None,
-            Some(&"x".repeat(MAX_NAME_LEN + 1))
+            Some(&"x".repeat(MAX_NAME_LEN + 1)),
+            None
         ));
+    }
+
+    #[test]
+    fn utm_source_extracts_slug() {
+        assert_eq!(
+            utm_source(Some("?utm_source=linkedin&utm_medium=profile_cta")),
+            Some("linkedin".into())
+        );
+        assert_eq!(
+            utm_source(Some("utm_medium=x&utm_source=LinkedIn")),
+            Some("linkedin".into())
+        );
+        assert_eq!(utm_source(Some("?ref=hn")), None);
+        assert_eq!(utm_source(None), None);
+    }
+
+    #[test]
+    fn utm_source_rejects_unusable_values() {
+        assert_eq!(utm_source(Some("?utm_source=")), None);
+        assert_eq!(utm_source(Some("?utm_source=a%20b")), None);
+        assert_eq!(utm_source(Some("?utm_source=<script>")), None);
+        assert_eq!(
+            utm_source(Some(&format!(
+                "?utm_source={}",
+                "x".repeat(MAX_SOURCE_LEN + 1)
+            ))),
+            None
+        );
     }
 
     #[test]
@@ -418,6 +493,7 @@ mod tests {
         let js = build_snippet("https://checkpulse.fly.dev/api/event");
         assert!(js.contains(r#"var endpoint = "https://checkpulse.fly.dev/api/event";"#));
         assert!(js.contains("navigator.sendBeacon(endpoint"));
+        assert!(js.contains("query: name ? null : (location.search || null)"));
         assert!(js.contains(r#"navigator.doNotTrack === "1""#));
         assert!(js.contains("history.pushState"));
         assert!(js.contains("window.checkpulse"));
