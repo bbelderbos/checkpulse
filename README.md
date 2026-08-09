@@ -1,10 +1,10 @@
-# checkpulse
+<p align="center">
+  <img src="docs/logo.png" alt="checkpulse" width="600">
+</p>
 
 Self-hosted, privacy-first web analytics in a single Rust binary. No cookies, no stored IPs, no consent banner. One SQLite file holds everything, and it runs on a Fly.io machine that sleeps when nobody's looking — a few cents a month for a personal site.
 
-<!-- Add a dashboard screenshot at docs/dashboard.png, then uncomment:
 ![The checkpulse dashboard](docs/dashboard.png)
--->
 
 ```html
 <script src="https://your-app.fly.dev/script.js"></script>

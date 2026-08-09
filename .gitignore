@@ -3,3 +3,4 @@
 *.db-sh*
 .env
 *.mmdb
+.DS_Store
