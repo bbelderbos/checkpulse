@@ -1,4 +1,5 @@
 use crate::AppState;
+use crate::config::Config;
 use askama::Template;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -25,6 +26,7 @@ pub struct EventCount {
 #[derive(Deserialize)]
 pub struct DashboardQuery {
     period: Option<String>,
+    site: Option<String>,
 }
 
 #[derive(Template)]
@@ -41,6 +43,19 @@ struct DashboardTemplate {
     top_events: Vec<EventCount>,
     top_browsers: Vec<Count>,
     top_devices: Vec<Count>,
+}
+
+#[derive(Template)]
+#[template(path = "overview.html")]
+struct OverviewTemplate {
+    period: String,
+    rows: Vec<SiteSummary>,
+}
+
+struct SiteSummary {
+    site_id: String,
+    total_views: i64,
+    unique_visitors: i64,
 }
 
 struct Period {
@@ -89,7 +104,10 @@ pub async fn dashboard(
     }
 
     let period = resolve_period(query.period.as_deref());
-    let site = &state.config.site_id;
+    // No ?site= = the overview of every configured site; ?site=host drills into one.
+    let Some(site) = query.site.as_deref() else {
+        return overview(&state, &period).await;
+    };
 
     let total_views = scalar_count(
         &state.pool,
@@ -160,7 +178,7 @@ pub async fn dashboard(
 
     let page = DashboardTemplate {
         period: period.key.to_string(),
-        site_id: site.clone(),
+        site_id: site.to_string(),
         total_views,
         unique_visitors,
         chart_labels,
@@ -179,6 +197,60 @@ pub async fn dashboard(
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+async fn overview(state: &AppState, period: &Period) -> Response {
+    let mut rows = Vec::new();
+    for site in configured_sites(&state.config) {
+        let total_views = scalar_count(
+            &state.pool,
+            "SELECT COUNT(*) FROM events WHERE site_id = ? AND ts >= ? AND name IS NULL",
+            &site,
+            period.cutoff,
+        )
+        .await;
+        let unique_visitors = scalar_count(
+            &state.pool,
+            "SELECT COUNT(DISTINCT visitor_hash) FROM events WHERE site_id = ? AND ts >= ? AND name IS NULL",
+            &site,
+            period.cutoff,
+        )
+        .await;
+        rows.push(SiteSummary {
+            site_id: site,
+            total_views,
+            unique_visitors,
+        });
+    }
+    rows.sort_by_key(|r| std::cmp::Reverse(r.total_views));
+
+    let page = OverviewTemplate {
+        period: period.key.to_string(),
+        rows,
+    };
+    match page.render() {
+        Ok(html) => Html(html).into_response(),
+        Err(e) => {
+            tracing::error!("template render failed: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+// The site list is the allowlist collapsed to distinct hosts, so a newly
+// allowed domain shows up at zero before its first event arrives.
+fn configured_sites(config: &Config) -> Vec<String> {
+    if config.allowed_origins.is_empty() {
+        return vec![config.default_site.clone()];
+    }
+    let mut sites = Vec::new();
+    for origin in &config.allowed_origins {
+        let host = crate::ingest::origin_host(origin);
+        if !sites.contains(&host) {
+            sites.push(host);
+        }
+    }
+    sites
 }
 
 async fn scalar_count(pool: &SqlitePool, sql: &'static str, site: &str, cutoff: i64) -> i64 {

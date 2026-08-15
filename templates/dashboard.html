@@ -31,12 +31,12 @@
 </head>
 <body>
   <h1>checkpulse</h1>
-  <p class="sub">{{ site_id }}</p>
+  <p class="sub"><a href="?period={{ period }}" style="text-decoration:none;color:#6b7280">← all sites</a> · {{ site_id }}</p>
 
   <div class="periods">
-    <a href="?period=today" class="{% if period == "today" %}active{% endif %}">Today</a>
-    <a href="?period=7d" class="{% if period == "7d" %}active{% endif %}">7 days</a>
-    <a href="?period=30d" class="{% if period == "30d" %}active{% endif %}">30 days</a>
+    <a href="?site={{ site_id }}&period=today" class="{% if period == "today" %}active{% endif %}">Today</a>
+    <a href="?site={{ site_id }}&period=7d" class="{% if period == "7d" %}active{% endif %}">7 days</a>
+    <a href="?site={{ site_id }}&period=30d" class="{% if period == "30d" %}active{% endif %}">30 days</a>
   </div>
 
   <div class="cards">

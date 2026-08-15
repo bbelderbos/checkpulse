@@ -27,7 +27,7 @@ It exists because a personal site doesn't need session recording and a funnel bu
 
 ## What you get
 
-A dashboard at `/` (basic auth, `?period=today|7d|30d`) showing:
+A dashboard at `/` (basic auth). `/` lists every configured site with its page views and unique visitors; click one (or add `?site=<domain>`) to drill into the full per-site view (`?period=today|7d|30d`) showing:
 
 - Page views and approximate unique visitors
 - A views-over-time chart
@@ -36,7 +36,9 @@ A dashboard at `/` (basic auth, `?period=today|7d|30d`) showing:
 
 Three endpoints on one binary: `/script.js` (the tracker), `/api/event` (ingestion), `/` (the dashboard). Plus `/health`.
 
-**What you don't get:** one deployment tracks one site. No funnels, goals, retention policies, scheduled email reports, or multi-user logins. If you need those, use Plausible.
+One deployment can track several sites — the same script tag on each, attributed by request origin (see [Add another site](#add-another-site)) — but they share one basic-auth login.
+
+**What you don't get:** No funnels, goals, retention policies, scheduled email reports, or multi-user logins. If you need those, use Plausible.
 
 ## Deploy your own
 
@@ -75,6 +77,28 @@ With `auto_stop_machines = "suspend"` and `min_machines_running = 0` (already in
 
 Nothing here is Fly-specific, though. It's a Dockerfile and a volume: any host that runs a container with persistent disk works.
 
+## Add another site
+
+One deployment can serve several sites. There's nothing per-site to configure beyond the allowlist: the site a hit belongs to is the host of its own request `Origin` (or `Referer`), and it's recorded only if that origin is listed in `ALLOWED_ORIGIN`. Anything not on the list is rejected, so the list is both the allowlist and the roster the dashboard iterates.
+
+To add `example.com`:
+
+```toml
+[env]
+  ALLOWED_ORIGIN = "https://belderbos.dev,https://www.belderbos.dev,https://example.com,https://www.example.com"
+```
+
+- Comma-separated, no spaces needed (they're trimmed). List the `www` host too if the site serves it — a request from `https://www.example.com` won't match a bare `https://example.com` entry. Both are folded to the same `example.com` when stored.
+- `SITE_ID` stays the default/fallback site: it's only used when `ALLOWED_ORIGIN` is empty (enforcement disabled) and to label the historical single-site data.
+
+Redeploy, then drop the **same** tag on the new site — the deployment figures out which site it is from the origin:
+
+```html
+<script src="https://your-app.fly.dev/script.js"></script>
+```
+
+The new domain appears on the `/` overview at zero right away (confirming it's wired) and starts counting on its first real hit.
+
 ## Run locally
 
 ```bash
@@ -97,8 +121,8 @@ curl -X POST localhost:8099/api/event \
 | Var | Default | Notes |
 |-----|---------|-------|
 | `DATABASE_PATH` | `checkpulse.db` | SQLite file path |
-| `SITE_ID` | `belderbos.dev` | Tag stored on every event; also used to drop self-referrals |
-| `ALLOWED_ORIGIN` | `https://belderbos.dev` | Events whose `Origin`/`Referer` doesn't match are rejected (empty = disabled) |
+| `SITE_ID` | `belderbos.dev` | Default/fallback site — used only when `ALLOWED_ORIGIN` is empty, and to label historical single-site data |
+| `ALLOWED_ORIGIN` | `https://belderbos.dev` | Comma-separated allowlist. An event's site is the host of its matching `Origin`/`Referer`; non-matching origins are rejected (empty = enforcement disabled, all attributed to `SITE_ID`) |
 | `DASHBOARD_USER` | `admin` | Dashboard basic auth username |
 | `DASHBOARD_PASSWORD` | _(required)_ | The app refuses to start if unset |
 | `BIND` / `PORT` | `0.0.0.0` / `8080` | Listen address |

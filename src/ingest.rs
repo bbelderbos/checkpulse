@@ -22,9 +22,13 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
         return StatusCode::NO_CONTENT;
     }
 
-    if !origin_allowed(&headers, &state.config.allowed_origin) {
+    let Some(site) = resolve_site(
+        &headers,
+        &state.config.allowed_origins,
+        &state.config.default_site,
+    ) else {
         return StatusCode::FORBIDDEN;
-    }
+    };
 
     let user_agent = header_value(&headers, "user-agent").unwrap_or_default();
     if is_bot(&user_agent) {
@@ -63,12 +67,10 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
         .map(str::to_string);
     let (browser, device) = crate::ua::classify(&user_agent);
 
-    let visitor_hash = state
-        .salt
-        .visitor_hash(&ip, &user_agent, &state.config.site_id);
+    let visitor_hash = state.salt.visitor_hash(&ip, &user_agent, &site);
     // Mobile apps routinely strip the referrer header, so a self-declared
     // utm_source is the only attribution left for those visits.
-    let referrer = referrer_host(event.referrer.as_deref(), &state.config.site_id)
+    let referrer = referrer_host(event.referrer.as_deref(), &site)
         .or_else(|| utm_source(event.query.as_deref()));
     let ts = now_secs();
 
@@ -76,7 +78,7 @@ pub async fn ingest(State(state): State<AppState>, headers: HeaderMap, body: Str
         "INSERT INTO events (site_id, ts, path, referrer, visitor_hash, name, browser, device)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(&state.config.site_id)
+    .bind(&site)
     .bind(ts)
     .bind(&path)
     .bind(&referrer)
@@ -203,18 +205,35 @@ fn is_bot(user_agent: &str) -> bool {
     BOT_UA_TOKENS.iter().any(|token| ua.contains(token))
 }
 
-fn origin_allowed(headers: &HeaderMap, allowed: &str) -> bool {
+// One instance can serve several sites: the event's site_id is the host of the
+// request's own origin, accepted only if that origin is in the allowlist. An
+// empty allowlist disables enforcement and attributes everything to the default.
+fn resolve_site(headers: &HeaderMap, allowed: &[String], default_site: &str) -> Option<String> {
     if allowed.is_empty() {
-        return true; // enforcement disabled
+        return Some(default_site.to_string());
     }
-    if let Some(origin) = header_value(headers, "origin") {
-        return origin == allowed;
+    let origin = request_origin(headers)?;
+    if allowed.contains(&origin) {
+        Some(origin_host(&origin))
+    } else {
+        None
     }
+}
+
+fn request_origin(headers: &HeaderMap) -> Option<String> {
     // Some clients omit Origin; fall back to the Referer's scheme://host.
-    if let Some(referer) = header_value(headers, "referer") {
-        return referer_origin(&referer).as_deref() == Some(allowed);
-    }
-    false
+    let raw = header_value(headers, "origin")
+        .or_else(|| header_value(headers, "referer").and_then(|r| referer_origin(&r)))?;
+    Some(raw.trim_end_matches('/').to_lowercase())
+}
+
+pub(crate) fn origin_host(origin: &str) -> String {
+    origin
+        .split("://")
+        .nth(1)
+        .unwrap_or(origin)
+        .trim_start_matches("www.")
+        .to_string()
 }
 
 fn referer_origin(referer: &str) -> Option<String> {
@@ -448,26 +467,63 @@ mod tests {
     }
 
     #[test]
-    fn origin_check_blocks_mismatch_and_missing() {
-        let allowed = "https://belderbos.dev";
+    fn resolve_site_attributes_by_origin_and_blocks_strangers() {
+        let allowed = vec![
+            "https://belderbos.dev".to_string(),
+            "https://scriptertorust.com".to_string(),
+        ];
 
-        let mut good = HeaderMap::new();
-        good.insert("origin", "https://belderbos.dev".parse().unwrap());
-        assert!(origin_allowed(&good, allowed));
+        let mut bel = HeaderMap::new();
+        bel.insert("origin", "https://belderbos.dev".parse().unwrap());
+        assert_eq!(
+            resolve_site(&bel, &allowed, "belderbos.dev"),
+            Some("belderbos.dev".into())
+        );
 
-        let mut evil = HeaderMap::new();
-        evil.insert("origin", "https://evil.com".parse().unwrap());
-        assert!(!origin_allowed(&evil, allowed));
+        // A second site on the same instance is attributed to its own host.
+        let mut rust = HeaderMap::new();
+        rust.insert("origin", "https://scriptertorust.com".parse().unwrap());
+        assert_eq!(
+            resolve_site(&rust, &allowed, "belderbos.dev"),
+            Some("scriptertorust.com".into())
+        );
 
+        // Origin missing: fall back to the Referer's scheme://host.
         let mut via_referer = HeaderMap::new();
         via_referer.insert(
             "referer",
-            "https://belderbos.dev/articles/x".parse().unwrap(),
+            "https://scriptertorust.com/pricing".parse().unwrap(),
         );
-        assert!(origin_allowed(&via_referer, allowed));
+        assert_eq!(
+            resolve_site(&via_referer, &allowed, "belderbos.dev"),
+            Some("scriptertorust.com".into())
+        );
 
-        assert!(!origin_allowed(&HeaderMap::new(), allowed));
-        assert!(origin_allowed(&HeaderMap::new(), "")); // empty = disabled
+        let mut evil = HeaderMap::new();
+        evil.insert("origin", "https://evil.com".parse().unwrap());
+        assert_eq!(resolve_site(&evil, &allowed, "belderbos.dev"), None);
+
+        // No origin and no referer → rejected when enforcement is on.
+        assert_eq!(
+            resolve_site(&HeaderMap::new(), &allowed, "belderbos.dev"),
+            None
+        );
+
+        // Empty allowlist disables enforcement, attributing to the default site.
+        assert_eq!(
+            resolve_site(&HeaderMap::new(), &[], "belderbos.dev"),
+            Some("belderbos.dev".into())
+        );
+    }
+
+    #[test]
+    fn origin_host_strips_scheme_and_www() {
+        assert_eq!(origin_host("https://belderbos.dev"), "belderbos.dev");
+        assert_eq!(
+            origin_host("https://www.scriptertorust.com"),
+            "scriptertorust.com"
+        );
+        assert_eq!(origin_host("http://localhost:8080"), "localhost:8080");
     }
 
     #[test]
