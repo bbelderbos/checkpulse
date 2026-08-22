@@ -6,7 +6,7 @@ primary_region = "ams"
 [env]
   DATABASE_PATH = "/data/checkpulse.db"
   SITE_ID = "belderbos.dev"
-  ALLOWED_ORIGIN = "https://belderbos.dev,https://www.belderbos.dev,https://scriptertorust.com,https://www.scriptertorust.com,https://pythonagenticai.com,https://www.pythonagenticai.com,https://askthecanon.com,https://www.askthecanon.com,https://scopefirst.dev,https://www.scopefirst.dev"
+  ALLOWED_ORIGIN = "https://belderbos.dev,https://www.belderbos.dev,https://scriptertorust.com,https://www.scriptertorust.com,https://pythonagenticai.com,https://www.pythonagenticai.com,https://askthecanon.com,https://www.askthecanon.com,https://scopefirst.dev,https://www.scopefirst.dev,https://quiet-automations.pages.dev"
 
 [[mounts]]
   source = "checkpulse_data"
